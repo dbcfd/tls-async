@@ -1,23 +1,13 @@
-extern crate env_logger;
-extern crate futures;
-extern crate native_tls;
-extern crate tokio;
-extern crate tokio_io;
-extern crate tokio_tls;
-
-#[macro_use]
-extern crate cfg_if;
-
-use std::io::{self, Read, Write};
+#![feature(async_await, await_macro, futures_api)]
+use std::io::Write;
 use std::process::Command;
 
-use futures::{Future, Poll};
-use futures::stream::Stream;
-use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_io::io::{read_to_end, copy, shutdown};
-use tokio::runtime::Runtime;
-use tokio::net::{TcpListener, TcpStream};
-use native_tls::{TlsConnector, TlsAcceptor, Identity};
+use tls_async::{TlsAcceptor as TlsAsyncAcceptor, TlsConnector as TlsAsyncConnector};
+use cfg_if::cfg_if;
+use futures::io::{AsyncReadExt, AsyncWriteExt};
+use futures::{FutureExt, StreamExt, TryFutureExt};
+use native_tls::{TlsConnector as NativeTlsConnector, TlsAcceptor as NativeTlsAcceptor, Identity};
+use romio::{TcpStream, TcpListener};
 
 macro_rules! t {
     ($e:expr) => (match $e {
@@ -35,7 +25,7 @@ struct Keys {
 
 #[allow(dead_code)]
 fn openssl_keys() -> &'static Keys {
-    static INIT: Once = ONCE_INIT;
+    static INIT: std::sync::Once = std::sync::ONCE_INIT;
     static mut KEYS: *mut Keys = 0 as *mut _;
 
     INIT.call_once(|| {
@@ -217,15 +207,15 @@ cfg_if! {
         use std::env;
         use std::sync::{Once, ONCE_INIT};
 
-        fn contexts() -> (tokio_tls::TlsAcceptor, tokio_tls::TlsConnector) {
+        fn contexts() -> (TlsAsyncAcceptor, TlsAsyncConnector) {
             let keys = openssl_keys();
 
             let pkcs12 = t!(Identity::from_pkcs12(&keys.pkcs12_der, "foobar"));
-            let srv = TlsAcceptor::builder(pkcs12);
+            let srv = NativeTlsAcceptor::builder(pkcs12);
 
             let cert = t!(native_tls::Certificate::from_der(&keys.cert_der));
 
-            let mut client = TlsConnector::builder();
+            let mut client = NativeTlsConnector::builder();
             t!(client.add_root_certificate(cert).build());
 
             (t!(srv.build()).into(), t!(client.build()).into())
@@ -235,16 +225,15 @@ cfg_if! {
 
         use std::env;
         use std::fs::File;
-        use std::sync::{Once, ONCE_INIT};
 
-        fn contexts() -> (tokio_tls::TlsAcceptor, tokio_tls::TlsConnector) {
+        fn contexts() -> (TlsAsyncAcceptor, TlsAsyncConnector) {
             let keys = openssl_keys();
 
             let pkcs12 = t!(Identity::from_pkcs12(&keys.pkcs12_der, "foobar"));
-            let srv = TlsAcceptor::builder(pkcs12);
+            let srv = NativeTlsAcceptor::builder(pkcs12);
 
             let cert = native_tls::Certificate::from_der(&keys.cert_der).unwrap();
-            let mut client = TlsConnector::builder();
+            let mut client = NativeTlsConnector::builder();
             client.add_root_certificate(cert);
 
             (t!(srv.build()).into(), t!(client.build()).into())
@@ -271,17 +260,17 @@ cfg_if! {
         use winapi::um::timezoneapi::*;
         use winapi::um::wincrypt::*;
 
-        const FRIENDLY_NAME: &'static str = "tokio-tls localhost testing cert";
+        const FRIENDLY_NAME: &'static str = "tls-async localhost testing cert";
 
-        fn contexts() -> (tokio_tls::TlsAcceptor, tokio_tls::TlsConnector) {
+        fn contexts() -> (TlsAsyncAcceptor, TlsAsyncConnector) {
             let cert = localhost_cert();
             let mut store = t!(Memory::new()).into_store();
             t!(store.add_cert(&cert, CertAdd::Always));
             let pkcs12_der = t!(store.export_pkcs12("foobar"));
             let pkcs12 = t!(Identity::from_pkcs12(&pkcs12_der, "foobar"));
 
-            let srv = TlsAcceptor::builder(pkcs12);
-            let client = TlsConnector::builder();
+            let srv = NativeTlsAcceptor::builder(pkcs12);
+            let client = NativeTlsConnector::builder();
             (t!(srv.build()).into(), t!(client.build()).into())
         }
 
@@ -316,10 +305,10 @@ cfg_if! {
                     if !cert.is_time_valid().unwrap() {
                         io::stdout().write_all(br#"
 
-The tokio-tls test suite is about to delete an old copy of one of its
+The tls-async test suite is about to delete an old copy of one of its
 certificates from your root trust store. This certificate was only valid for one
 day and it is no longer needed. The host should be "localhost" and the
-description should mention "tokio-tls".
+description should mention "tls-async".
 
         "#).unwrap();
                         cert.delete().unwrap();
@@ -357,7 +346,7 @@ description should mention "tokio-tls".
                 let mut provider = 0;
                 let mut hkey = 0;
 
-                let mut buffer = "tokio-tls test suite".encode_utf16()
+                let mut buffer = "tls-async test suite".encode_utf16()
                                                          .chain(Some(0))
                                                          .collect::<Vec<_>>();
                 let res = CryptAcquireContextW(&mut provider,
@@ -387,8 +376,8 @@ description should mention "tokio-tls".
                 }
 
                 // start creating the certificate
-                let name = "CN=localhost,O=tokio-tls,OU=tokio-tls,\
-                            G=tokio_tls".encode_utf16()
+                let name = "CN=localhost,O=tls-async,OU=tls-async,\
+                            G=tls_async".encode_utf16()
                                           .chain(Some(0))
                                           .collect::<Vec<_>>();
                 let mut cname_buffer: [WCHAR; UNLEN as usize + 1] = mem::zeroed();
@@ -469,164 +458,136 @@ description should mention "tokio-tls".
                 let cert_context = MyCertContext(cert_context);
                 let cert_context: CertContext = mem::transmute(cert_context);
 
-                try!(cert_context.set_friendly_name(FRIENDLY_NAME));
+                cert_context.set_friendly_name(FRIENDLY_NAME)?;
 
                 // install the certificate to the machine's local store
                 io::stdout().write_all(br#"
 
-The tokio-tls test suite is about to add a certificate to your set of root
+The tls-async test suite is about to add a certificate to your set of root
 and trusted certificates. This certificate should be for the domain "localhost"
-with the description related to "tokio-tls". This certificate is only valid
-for one day and will be automatically deleted if you re-run the tokio-tls
+with the description related to "tls-async". This certificate is only valid
+for one day and will be automatically deleted if you re-run the tls-async
 test suite later.
 
         "#).unwrap();
-                try!(local_root_store().add_cert(&cert_context,
-                                                 CertAdd::ReplaceExisting));
+                local_root_store().add_cert(&cert_context,
+                                                 CertAdd::ReplaceExisting)?;
                 Ok(cert_context)
             }
         }
     }
 }
 
-fn native2io(e: native_tls::Error) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e)
-}
-
-const AMT: u64 = 128 * 1024;
+const AMT: usize = 128 * 1024;
+const EXPECTED: [u8; AMT] = [0u8; AMT];
+const SMALL_AMT: usize = 1024;
+const SMALL_EXPECTED: [u8; SMALL_AMT] = [0u8; SMALL_AMT];
 
 #[test]
 fn client_to_server() {
     drop(env_logger::try_init());
-    let mut l = t!(Runtime::new());
 
     // Create a server listening on a port, then figure out what that port is
     let srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
     let addr = t!(srv.local_addr());
-
     let (server_cx, client_cx) = contexts();
 
     // Create a future to accept one socket, connect the ssl stream, and then
     // read all the data from it.
-    let socket = srv.incoming().take(1).collect();
-    let received = socket.map(|mut socket| {
-        socket.remove(0)
-    }).and_then(move |socket| {
-        server_cx.accept(socket).map_err(native2io)
-    }).and_then(|socket| {
-        read_to_end(socket, Vec::new())
-    });
+    let fut_server = async move {
+        let mut incoming = srv.incoming();
+        let socket = t!(await!(incoming.next()).unwrap());
+        let f = server_cx.accept(socket);
+        let mut stream = t!(await!(f));
+        let mut buf = vec![];
+        t!(await!(stream.read_to_end(&mut buf)));
+        buf
+    };
 
-    // Create a future to connect to our server, connect the ssl stream, and
-    // then write a bunch of data to it.
-    let client = TcpStream::connect(&addr);
-    let sent = client.and_then(move |socket| {
-        client_cx.connect("localhost", socket).map_err(native2io)
-    }).and_then(|socket| {
-        copy(io::repeat(9).take(AMT), socket)
-    }).and_then(|(amt, _repeat, socket)| {
-        shutdown(socket).map(move |_| amt)
-    });
+    let fut_client = async move {
+        // Create a future to connect to our server, connect the ssl stream, and
+        // then write a bunch of data to it.
+        let socket = t!(await!(TcpStream::connect(&addr)));
+        let mut socket = t!(await!(client_cx.connect("localhost", socket)));
+        t!(await!(socket.write_all(&EXPECTED)));
+        t!(await!(socket.flush()));
+        t!(await!(socket.close()));
+    };
 
     // Finally, run everything!
-    let (amt, (_, data)) = t!(l.block_on(sent.join(received)));
-    assert_eq!(amt, AMT);
-    assert!(data == vec![9; amt as usize]);
+    let mut rt = t!(tokio::runtime::Runtime::new());
+    rt.spawn(fut_client.boxed().unit_error().compat());
+    let data = t!(rt.block_on(fut_server.fuse().boxed().unit_error().compat()));
+
+    assert!(data == EXPECTED.to_vec());
 }
 
 #[test]
 fn server_to_client() {
     drop(env_logger::try_init());
-    let mut l = t!(Runtime::new());
 
     // Create a server listening on a port, then figure out what that port is
     let srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
     let addr = t!(srv.local_addr());
-
     let (server_cx, client_cx) = contexts();
 
-    let socket = srv.incoming().take(1).collect();
-    let sent = socket.map(|mut socket| {
-        socket.remove(0)
-    }).and_then(move |socket| {
-        server_cx.accept(socket).map_err(native2io)
-    }).and_then(|socket| {
-        copy(io::repeat(9).take(AMT), socket)
-    }).and_then(|(amt, _repeat, socket)| {
-        shutdown(socket).map(move |_| amt)
-    });
+    let fut_server = async move {
+        let mut incoming = srv.incoming();
+        let socket = t!(await!(incoming.next()).unwrap());
+        let mut socket = t!(await!(server_cx.accept(socket)));
+        t!(await!(socket.write_all(&EXPECTED)));
+        t!(await!(socket.flush()));
+        t!(await!(socket.close()));
+    };
 
-    let client = TcpStream::connect(&addr);
-    let received = client.and_then(move |socket| {
-        client_cx.connect("localhost", socket).map_err(native2io)
-    }).and_then(|socket| {
-        read_to_end(socket, Vec::new())
-    });
+    let fut_client = async move {
+        let socket = t!(await!(TcpStream::connect(&addr)));
+        let mut stream = t!(await!(client_cx.connect("localhost", socket)));
+        let mut buf = vec![];
+        t!(await!(stream.read_to_end(&mut buf)));
+        buf
+    };
 
     // Finally, run everything!
-    let (amt, (_, data)) = t!(l.block_on(sent.join(received)));
-    assert_eq!(amt, AMT);
-    assert!(data == vec![9; amt as usize]);
-}
+    let mut rt = t!(tokio::runtime::Runtime::new());
+    rt.spawn(fut_server.boxed().unit_error().compat());
+    let data = t!(rt.block_on(fut_client.boxed().unit_error().compat()));
 
-struct OneByte<S> {
-    inner: S,
-}
-
-impl<S: Read> Read for OneByte<S> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.inner.read(&mut buf[..1])
-    }
-}
-
-impl<S: Write> Write for OneByte<S> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write(&buf[..1])
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-impl<S: AsyncRead> AsyncRead for OneByte<S> {}
-impl<S: AsyncWrite> AsyncWrite for OneByte<S> {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.inner.shutdown()
-    }
+    assert!(data == EXPECTED.to_vec());
 }
 
 #[test]
 fn one_byte_at_a_time() {
-    const AMT: u64 = 1024;
     drop(env_logger::try_init());
-    let mut l = t!(Runtime::new());
 
     let srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
     let addr = t!(srv.local_addr());
-
     let (server_cx, client_cx) = contexts();
 
-    let socket = srv.incoming().take(1).collect();
-    let sent = socket.map(|mut socket| {
-        socket.remove(0)
-    }).and_then(move |socket| {
-        server_cx.accept(OneByte { inner: socket }).map_err(native2io)
-    }).and_then(|socket| {
-        copy(io::repeat(9).take(AMT), socket)
-    }).and_then(|(amt, _repeat, socket)| {
-        shutdown(socket).map(move |_| amt)
-    });
+    let fut_server = async move {
+        let mut incoming = srv.incoming();
+        let socket = t!(await!(incoming.next()).unwrap());
+        let mut stream = t!(await!(server_cx.accept(socket)));
+        for byte in SMALL_EXPECTED.iter().cloned() {
+            let to_send = [byte];
+            t!(await!(stream.write_all(&to_send)));
+            t!(await!(stream.flush()));
+        }
+        t!(await!(stream.close()));
+    };
 
-    let client = TcpStream::connect(&addr);
-    let received = client.and_then(move |socket| {
-        let socket = OneByte { inner: socket };
-        client_cx.connect("localhost", socket).map_err(native2io)
-    }).and_then(|socket| {
-        read_to_end(socket, Vec::new())
-    });
+    let fut_client = async move {
+        let socket = t!(await!(TcpStream::connect(&addr)));
+        let mut stream = t!(await!(client_cx.connect("localhost", socket)));
+        let mut buf = vec![];
+        t!(await!(stream.read_to_end(&mut buf)));
+        buf
+    };
 
-    let (amt, (_, data)) = t!(l.block_on(sent.join(received)));
-    assert_eq!(amt, AMT);
-    assert!(data == vec![9; amt as usize]);
+    // Finally, run everything!
+    let mut rt = t!(tokio::runtime::Runtime::new());
+    rt.spawn(fut_server.boxed().unit_error().compat());
+    let data = t!(rt.block_on(fut_client.boxed().unit_error().compat()));
+
+    assert!(data == SMALL_EXPECTED.to_vec());
 }

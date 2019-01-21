@@ -1,33 +1,37 @@
 [package]
-name = "tokio-tls"
+name = "tls-async"
+edition = "2018"
+
 # When releasing to crates.io:
 # - Update html_root_url.
 # - Update CHANGELOG.md.
-# - Create "tokio-tls-0.2.x" git tag.
-version = "0.2.1"
-authors = ["Carl Lerche <me@carllerche.com>"]
+# - Update doc URL.
+# - Create "v0.1.x" git tag.
+version = "0.3.0-alpha.1"
 license = "MIT"
-repository = "https://github.com/tokio-rs/tokio"
-homepage = "https://tokio.rs"
-documentation = "https://docs.rs/tokio-tls/0.2.1/tokio_tls/"
+readme = "README.md"
 description = """
-An implementation of TLS/SSL streams for Tokio giving an implementation of TLS
-for nonblocking I/O streams.
+TLS support for AsyncRead/AsyncWrite using native-tls
 """
 categories = ["asynchronous", "network-programming"]
 
-[badges]
-travis-ci = { repository = "tokio-rs/tokio-tls" }
-
 [dependencies]
-futures = "0.1.23"
+log = "0.4.1"
 native-tls = "0.2"
-tokio-io = { version = "0.1.7", path = "../tokio-io" }
+
+[dependencies.futures]
+version = "0.3.0-alpha.12"
+package = "futures-preview"
+features = ["compat", "io-compat", "std"]
 
 [dev-dependencies]
-tokio = { version = "0.1", path = "../" }
 cfg-if = "0.1"
-env_logger = { version = "0.5", default-features = false }
+romio = "0.3.0-alpha.1"
+tokio = "0.1"
+
+[dev-dependencies.env_logger]
+version = "0.5"
+default-features = false
 
 [target.'cfg(all(not(target_os = "macos"), not(windows), not(target_os = "ios")))'.dev-dependencies]
 openssl = "0.10"

@@ -1,21 +1,13 @@
-extern crate env_logger;
-extern crate futures;
-extern crate native_tls;
-extern crate tokio_io;
-extern crate tokio_tls;
-extern crate tokio;
-
-#[macro_use]
-extern crate cfg_if;
+#![feature(async_await, await_macro, futures_api)]
 
 use std::io;
 use std::net::ToSocketAddrs;
 
-use futures::Future;
+use cfg_if::cfg_if;
+use futures::{FutureExt, TryFutureExt};
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use native_tls::TlsConnector;
-use tokio_io::io::{flush, read_to_end, write_all};
-use tokio::net::TcpStream;
-use tokio::runtime::Runtime;
+use romio::TcpStream;
 
 macro_rules! t {
     ($e:expr) => (match $e {
@@ -64,33 +56,41 @@ fn native2io(e: native_tls::Error) -> io::Error {
 fn fetch_google() {
     drop(env_logger::try_init());
 
-    // First up, resolve google.com
-    let addr = t!("google.com:443".to_socket_addrs()).next().unwrap();
+    let fut_result = async {
+        // First up, resolve google.com
+        let addr = t!("google.com:443".to_socket_addrs()).next().unwrap();
 
-    // Create an event loop and connect a socket to our resolved address.c
-    let mut l = t!(Runtime::new());
-    let client = TcpStream::connect(&addr);
+        let socket = t!(await!(TcpStream::connect(&addr)));
 
+        println!("Connected to google");
 
-    // Send off the request by first negotiating an SSL handshake, then writing
-    // of our request, then flushing, then finally read off the response.
-    let data = client.and_then(move |socket| {
-                                   let builder = TlsConnector::builder();
-                                   let connector = t!(builder.build());
-                                   let connector = tokio_tls::TlsConnector::from(connector);
-                                   connector.connect("google.com", socket).map_err(native2io)
-                               })
-        .and_then(|socket| write_all(socket, b"GET / HTTP/1.0\r\n\r\n"))
-        .and_then(|(socket, _)| flush(socket))
-        .and_then(|socket| read_to_end(socket, Vec::new()));
+        // Send off the request by first negotiating an SSL handshake, then writing
+        // of our request, then flushing, then finally read off the response.
+        let builder = TlsConnector::builder();
+        let cx = t!(builder.build());
+        let connector = tls_async::TlsConnector::from(cx);
 
-    let (_, data) = t!(l.block_on(data));
+        println!("Attempting tls connection");
+
+        let mut stream = t!(await!(connector.connect("google.com", socket)));
+        t!(await!(stream.write_all(b"GET / HTTP/1.0\r\n\r\n")));
+        t!(await!(stream.flush()));
+        let mut buf = vec![];
+        t!(await!(stream.read_to_end(&mut buf)));
+        t!(await!(stream.close()));
+        buf
+    };
+
+    let mut rt = t!(tokio::runtime::Runtime::new());
+    let data = t!(rt.block_on(fut_result.fuse().boxed().unit_error().compat()));
+
+    println!("Data={}", String::from_utf8_lossy(&data));
 
     // any response code is fine
     assert!(data.starts_with(b"HTTP/1.0 "));
 
     let data = String::from_utf8_lossy(&data);
-    let data = data.trim_right();
+    let data = data.trim_end();
     assert!(data.ends_with("</html>") || data.ends_with("</HTML>"));
 }
 
@@ -100,19 +100,18 @@ fn fetch_google() {
 fn wrong_hostname_error() {
     drop(env_logger::try_init());
 
-    let addr = t!("google.com:443".to_socket_addrs()).next().unwrap();
+    let fut_result = async {
+        let addr = t!("google.com:443".to_socket_addrs()).next().unwrap();
+        let socket = t!(await!(TcpStream::connect(&addr)));
+        let builder = TlsConnector::builder();
+        let connector = t!(builder.build());
+        let connector = tls_async::TlsConnector::from(connector);
+        await!(connector.connect("rust-lang.org", socket))
+    };
 
-    let mut l = t!(Runtime::new());
-    let client = TcpStream::connect(&addr);
-    let data = client.and_then(move |socket| {
-                                   let builder = TlsConnector::builder();
-                                   let connector = t!(builder.build());
-                                   let connector = tokio_tls::TlsConnector::from(connector);
-                                   connector.connect("rust-lang.org", socket)
-                                       .map_err(native2io)
-                               });
+    let mut rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_result.fuse().boxed().compat());
 
-    let res = l.block_on(data);
     assert!(res.is_err());
-    assert_bad_hostname_error(&res.err().unwrap());
+    assert_bad_hostname_error(&native2io(res.err().unwrap()));
 }

@@ -1,60 +1,44 @@
+#![feature(async_await, await_macro, futures_api)]
 // A tiny async TLS echo server with Tokio
-extern crate native_tls;
-extern crate tokio;
-extern crate tokio_tls;
-
+use futures::{FutureExt, TryFutureExt, StreamExt};
+use futures::io::AsyncReadExt;
 use native_tls::Identity;
-use tokio::io;
-use tokio::net::TcpListener;
-use tokio::prelude::*;
 
-fn main() -> Result<(), Box<std::error::Error>> {
+async fn accept_connections() -> () {
     // Bind the server's socket
-    let addr = "127.0.0.1:12345".parse()?;
-    let tcp = TcpListener::bind(&addr)?;
+    let addr = "127.0.0.1:12345".parse().expect("Failed to parse address");
+    let tcp = romio::TcpListener::bind(&addr).expect("Failed to bind");
 
     // Create the TLS acceptor.
     let der = include_bytes!("identity.p12");
-    let cert = Identity::from_pkcs12(der, "mypass")?;
-    let tls_acceptor = tokio_tls::TlsAcceptor::from(
-        native_tls::TlsAcceptor::builder(cert).build()?);
+    let cert = Identity::from_pkcs12(der, "mypass").expect("Failed to create identity");
+    let tls_acceptor = tls_async::TlsAcceptor::from(
+        native_tls::TlsAcceptor::builder(cert).build().expect("Failed to build native acceptor")
+    );
 
     // Iterate incoming connections
-    let server = tcp.incoming().for_each(move |tcp| {
+    let mut tcp_incoming = tcp.incoming();
+    while let Some(tcp) = await!(tcp_incoming.next()) {
+        let tcp = tcp.expect("Error encountered while fetching next");
+        let tcp = tls_acceptor.accept(tcp);
+        let tls = async {
+            let tls = await!(tcp).expect("Failed to form tls connection");
+            // Split up the read and write halves
+            let (mut reader, mut writer) = tls.split();
 
-        // Accept the TLS connection.
-        let tls_accept = tls_acceptor.accept(tcp)
-            .and_then(move |tls| {
-                // Split up the read and write halves
-                let (reader, writer) = tls.split();
+            // Copy the data back to the client
+            match await!(reader.copy_into(&mut writer)) {
+                Ok(n) => println!("wrote {} bytes", n),
+                Err(err) => println!("IO error {:?}", err)
+            }
+        };
+        tokio::spawn(tls.boxed().unit_error().compat());
+    }
+}
 
-                // Copy the data back to the client
-                let conn = io::copy(reader, writer)
-                    // print what happened
-                    .map(|(n, _, _)| {
-                        println!("wrote {} bytes", n)
-                    })
-                    // Handle any errors
-                    .map_err(|err| {
-                        println!("IO error {:?}", err)
-                    });
-
-                // Spawn the future as a concurrent task
-                tokio::spawn(conn);
-
-                Ok(())
-            })
-            .map_err(|err| {
-                println!("TLS accept error: {:?}", err);
-            });
-        tokio::spawn(tls_accept);
-
-        Ok(())
-    }).map_err(|err| {
-        println!("server error {:?}", err);
-    });
+fn main() {
+    let mut rt = tokio::runtime::Runtime::new().expect("Failed to build runtime");
 
     // Start the runtime and spin up the server
-    tokio::run(server);
-    Ok(())
+    rt.block_on(accept_connections().boxed().unit_error().compat()).expect("Failed to run");
 }

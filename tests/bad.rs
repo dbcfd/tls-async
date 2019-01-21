@@ -1,19 +1,11 @@
-extern crate env_logger;
-extern crate futures;
-extern crate native_tls;
-extern crate tokio;
-extern crate tokio_tls;
-
-#[macro_use]
-extern crate cfg_if;
-
-use std::io::{self, Error};
+#![feature(async_await, await_macro, futures_api)]
+use std::io::Error;
 use std::net::ToSocketAddrs;
 
-use futures::Future;
+use cfg_if::cfg_if;
+use futures::{FutureExt, TryFutureExt};
 use native_tls::TlsConnector;
-use tokio::net::TcpStream;
-use tokio::runtime::Runtime;
+use romio::TcpStream;
 
 macro_rules! t {
     ($e:expr) => (match $e {
@@ -48,26 +40,26 @@ cfg_if! {
                         all(not(target_os = "macos"),
                             not(target_os = "windows"),
                             not(target_os = "ios"))))] {
-        extern crate openssl;
+        use openssl;
 
         fn verify_failed(err: &Error) {
             assert!(format!("{}", err).contains("certificate verify failed"))
         }
 
-        use verify_failed as assert_expired_error;
-        use verify_failed as assert_wrong_host;
-        use verify_failed as assert_self_signed;
-        use verify_failed as assert_untrusted_root;
+        use self::verify_failed as assert_expired_error;
+        use self::verify_failed as assert_wrong_host;
+        use self::verify_failed as assert_self_signed;
+        use self::verify_failed as assert_untrusted_root;
     } else if #[cfg(any(target_os = "macos", target_os = "ios"))] {
 
         fn assert_invalid_cert_chain(err: &Error) {
             assert!(format!("{}", err).contains("was not trusted."))
         }
 
-        use assert_invalid_cert_chain as assert_expired_error;
-        use assert_invalid_cert_chain as assert_wrong_host;
-        use assert_invalid_cert_chain as assert_self_signed;
-        use assert_invalid_cert_chain as assert_untrusted_root;
+        use self::assert_invalid_cert_chain as assert_expired_error;
+        use self::assert_invalid_cert_chain as assert_wrong_host;
+        use self::assert_invalid_cert_chain as assert_self_signed;
+        use self::assert_invalid_cert_chain as assert_untrusted_root;
     } else {
         fn assert_expired_error(err: &Error) {
             let s = err.to_string();
@@ -84,35 +76,38 @@ cfg_if! {
             assert!(s.contains("root certificate which is not trusted"), "error = {:?}", s);
         }
 
-        use assert_self_signed as assert_untrusted_root;
+        use self::assert_self_signed as assert_untrusted_root;
     }
 }
 
-fn get_host(host: &'static str) -> Error {
+fn native2io(e: native_tls::Error) -> Error {
+    Error::new(std::io::ErrorKind::Other, e)
+}
+
+async fn get_host(host: String) -> Result<(), Error> {
     drop(env_logger::try_init());
 
     let addr = format!("{}:443", host);
     let addr = t!(addr.to_socket_addrs()).next().unwrap();
 
-    let mut l = t!(Runtime::new());
-    let client = TcpStream::connect(&addr);
-    let data = client.and_then(move |socket| {
-        let builder = TlsConnector::builder();
-        let cx = builder.build().unwrap();
-        let cx = tokio_tls::TlsConnector::from(cx);
-        cx.connect(host, socket).map_err(|e| {
-            Error::new(io::ErrorKind::Other, e)
-        })
-    });
-
-    let res = l.block_on(data);
-    assert!(res.is_err());
-    res.err().unwrap()
+    let socket = t!(await!(TcpStream::connect(&addr)));
+    let builder = TlsConnector::builder();
+    let cx = t!(builder.build());
+    let cx = tls_async::TlsConnector::from(cx);
+    await!(cx.connect(&host, socket)).map_err(native2io)?;
+    Ok(())
 }
 
 #[test]
 fn expired() {
-    assert_expired_error(&get_host("expired.badssl.com"))
+    let fut_res = async {
+        await!(get_host("expired.badssl.com".to_owned()))
+    };
+    let mut rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_res.boxed().compat());
+
+    assert!(res.is_err());
+    assert_expired_error(&res.err().unwrap());
 }
 
 // TODO: the OSX builders on Travis apparently fail this tests spuriously?
@@ -120,15 +115,36 @@ fn expired() {
 #[test]
 #[cfg_attr(all(target_os = "macos", feature = "force-openssl"), ignore)]
 fn wrong_host() {
-    assert_wrong_host(&get_host("wrong.host.badssl.com"))
+    let fut_res = async {
+        await!(get_host("wrong.host.badssl.com".to_owned()))
+    };
+    let mut rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_res.boxed().compat());
+
+    assert!(res.is_err());
+    assert_wrong_host(&res.err().unwrap());
 }
 
 #[test]
 fn self_signed() {
-    assert_self_signed(&get_host("self-signed.badssl.com"))
+    let fut_res = async {
+        await!(get_host("self-signed.badssl.com".to_owned()))
+    };
+    let mut rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_res.boxed().compat());
+
+    assert!(res.is_err());
+    assert_self_signed(&res.err().unwrap());
 }
 
 #[test]
 fn untrusted_root() {
-    assert_untrusted_root(&get_host("untrusted-root.badssl.com"))
+    let fut_res = async {
+        await!(get_host("untrusted-root.badssl.com".to_owned()))
+    };
+    let mut rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_res.boxed().compat());
+
+    assert!(res.is_err());
+    assert_untrusted_root(&res.err().unwrap());
 }

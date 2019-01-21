@@ -1,42 +1,39 @@
-extern crate futures;
-extern crate native_tls;
-extern crate tokio;
-extern crate tokio_io;
-extern crate tokio_tls;
-
-use std::io;
+#![feature(async_await, await_macro, futures_api)]
 use std::net::ToSocketAddrs;
 
-use futures::Future;
+use futures::{FutureExt, TryFutureExt};
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use native_tls::TlsConnector;
-use tokio::net::TcpStream;
+use romio::TcpStream;
 use tokio::runtime::Runtime;
 
-fn main() -> Result<(), Box<std::error::Error>> {
-    let mut runtime = Runtime::new()?;
-    let addr = "www.rust-lang.org:443".to_socket_addrs()?.next().ok_or("failed to resolve www.rust-lang.org")?;
+fn main() {
+    let mut runtime = Runtime::new().expect("Could not build runtime");
 
-    let socket = TcpStream::connect(&addr);
-    let cx = TlsConnector::builder().build()?;
-    let cx = tokio_tls::TlsConnector::from(cx);
+    let fut_result = async {
+        let addr: std::net::SocketAddr = "www.rust-lang.org:443"
+            .to_socket_addrs()
+            .expect("not a valid address")
+            .next()
+            .expect("Not a valid address");
 
-    let tls_handshake = socket.and_then(move |socket| {
-        cx.connect("www.rust-lang.org", socket).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, e)
-        })
-    });
-    let request = tls_handshake.and_then(|socket| {
-        tokio_io::io::write_all(socket, "\
+        let socket = await!(TcpStream::connect(&addr)).expect("Could not connect");
+        let cx = TlsConnector::builder().build().expect("Could not build");
+        let cx = tls_async::TlsConnector::from(cx);
+
+        let mut socket = await!(cx.connect("www.rust-lang.org", socket)).expect("Could not form tls connection");
+        let _ = await!(socket.write_all(b"\
             GET / HTTP/1.0\r\n\
             Host: www.rust-lang.org\r\n\
             \r\n\
-        ".as_bytes())
-    });
-    let response = request.and_then(|(socket, _)| {
-        tokio_io::io::read_to_end(socket, Vec::new())
-    });
+        "));
+        await!(socket.flush()).expect("Could not flush");
+        let mut vec = vec![];
+        await!(socket.read_to_end(&mut vec)).expect("Could not read");
+        await!(socket.close()).expect("Could not close");
+        vec
+    };
 
-    let (_, data) = runtime.block_on(response)?;
+    let data: Vec<u8> = runtime.block_on(fut_result.boxed().unit_error().compat()).expect("Could not run");
     println!("{}", String::from_utf8_lossy(&data));
-    Ok(())
 }

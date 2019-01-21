@@ -1,9 +1,11 @@
-# tokio-tls
+# tls-async
 
-An implementation of TLS/SSL streams for Tokio built on top of the [`native-tls`
+This is an experimental fork of [tokio-tls](https://github.com/tokio-rs/tokio/tree/master/tokio-tls) on top of [Futures 0.3](https://github.com/rust-lang-nursery/futures-rs) AsyncRead, AsyncWrite, and Compat. It is primarily intended for usage with [Romio](https://github.com/withoutboats/romio).
+
+An implementation of TLS/SSL streams for [Futures 0.3](https://github.com/rust-lang-nursery/futures-rs) built on top of the [`native-tls`
 crate]
 
-[Documentation](https://docs.rs/tokio-tls/0.2.1/tokio_tls/)
+[Documentation](https://docs.rs/tls-async/0.3.0-alpha.1/)
 
 [`native-tls` crate]: https://github.com/sfackler/rust-native-tls
 
@@ -14,20 +16,16 @@ First, add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 native-tls = "0.2"
-tokio-tls = "0.2"
+tls-async = "0.3.0-alpha.1"
 ```
 
 Next, add this to your crate:
 
 ```rust
-extern crate native_tls;
-extern crate tokio_tls;
-
-use tokio_tls::{TlsConnector, TlsAcceptor};
+use tls_async::{TlsConnector, TlsAcceptor};
 ```
 
-You can find few examples how to use this crate in examples directory (using TLS in
-hyper server or client).
+You can find few examples how to use this crate in tests directory.
 
 By default the `native-tls` crate currently uses the "platform appropriate"
 backend for a TLS implementation. This means:
@@ -50,5 +48,5 @@ This project is licensed under the [MIT license](./LICENSE).
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in Tokio by you, shall be licensed as MIT, without any additional
+for inclusion in tls-async by you, shall be licensed as MIT, without any additional
 terms or conditions.

@@ -1,6 +1,4 @@
-#![deny(missing_docs)]
-#![doc(html_root_url = "https://docs.rs/tokio-tls/0.2.1")]
-
+#![feature(async_await, await_macro, futures_api)]
 //! Async TLS streams
 //!
 //! This library is an implementation of TLS streams using the most appropriate
@@ -18,16 +16,18 @@
 //! built. Configuration of TLS parameters is still primarily done through the
 //! `native-tls` crate.
 
-extern crate futures;
-extern crate native_tls;
-#[macro_use]
-extern crate tokio_io;
-
 use std::io::{self, Read, Write};
+use std::pin::Pin;
+use std::task::LocalWaker;
 
-use futures::{Poll, Future, Async};
-use native_tls::{HandshakeError, Error};
-use tokio_io::{AsyncRead, AsyncWrite};
+use futures::Future;
+use futures::compat::Compat;
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use futures::Poll;
+use log::debug;
+use native_tls::{Error, HandshakeError, MidHandshakeTlsStream, TlsStream as NativeTlsStream};
+
+pub type NativeWrapperStream<S> = NativeTlsStream<Compat<S>>;
 
 /// A wrapper around an underlying raw stream which implements the TLS or SSL
 /// protocol.
@@ -38,7 +38,67 @@ use tokio_io::{AsyncRead, AsyncWrite};
 /// to a `TlsStream` are encrypted when passing through to `S`.
 #[derive(Debug)]
 pub struct TlsStream<S> {
-    inner: native_tls::TlsStream<S>,
+    inner: NativeWrapperStream<S>,
+}
+
+impl<S> TlsStream<S> {
+    /// Get access to the internal `native_tls::TlsStream` stream which also
+    /// transitively allows access to `S`.
+    pub fn get_ref(&self) -> &NativeWrapperStream<S> {
+        &self.inner
+    }
+
+    /// Get mutable access to the internal `native_tls::TlsStream` stream which
+    /// also transitively allows mutable access to `S`.
+    pub fn get_mut(&mut self) -> &mut NativeWrapperStream<S> {
+        &mut self.inner
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite> AsyncRead for TlsStream<S> {
+    fn poll_read(&mut self, _lw: &LocalWaker, buf: &mut [u8])
+                 -> Poll<Result<usize, io::Error>> {
+        match self.inner.read(buf) {
+            Ok(sz) => Poll::Ready(Ok(sz)),
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e))
+        }
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite> AsyncWrite for TlsStream<S> {
+    fn poll_write(&mut self, _lw: &LocalWaker, buf: &[u8])
+                  -> Poll<Result<usize, io::Error>> {
+        match self.inner.write(buf) {
+            Ok(sz) => Poll::Ready(Ok(sz)),
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e))
+        }
+    }
+
+    fn poll_flush(&mut self, _lw: &LocalWaker) -> Poll<Result<(), io::Error>> {
+        match self.inner.flush() {
+            Ok(sz) => Poll::Ready(Ok(sz)),
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e))
+        }
+    }
+
+    fn poll_close(&mut self, _lw: &LocalWaker) -> Poll<Result<(), io::Error>> {
+        match self.inner.shutdown() {
+            Ok(sz) => Poll::Ready(Ok(sz)),
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e))
+        }
+    }
 }
 
 /// A wrapper around a `native_tls::TlsConnector`, providing an async `connect`
@@ -46,70 +106,6 @@ pub struct TlsStream<S> {
 #[derive(Clone)]
 pub struct TlsConnector {
     inner: native_tls::TlsConnector,
-}
-
-/// A wrapper around a `native_tls::TlsAcceptor`, providing an async `accept`
-/// method.
-#[derive(Clone)]
-pub struct TlsAcceptor {
-    inner: native_tls::TlsAcceptor,
-}
-
-/// Future returned from `TlsConnector::connect` which will resolve
-/// once the connection handshake has finished.
-pub struct Connect<S> {
-    inner: MidHandshake<S>,
-}
-
-/// Future returned from `TlsAcceptor::accept` which will resolve
-/// once the accept handshake has finished.
-pub struct Accept<S> {
-    inner: MidHandshake<S>,
-}
-
-struct MidHandshake<S> {
-    inner: Option<Result<native_tls::TlsStream<S>, HandshakeError<S>>>,
-}
-
-impl<S> TlsStream<S> {
-    /// Get access to the internal `native_tls::TlsStream` stream which also
-    /// transitively allows access to `S`.
-    pub fn get_ref(&self) -> &native_tls::TlsStream<S> {
-        &self.inner
-    }
-
-    /// Get mutable access to the internal `native_tls::TlsStream` stream which
-    /// also transitively allows mutable access to `S`.
-    pub fn get_mut(&mut self) -> &mut native_tls::TlsStream<S> {
-        &mut self.inner
-    }
-}
-
-impl<S: Read + Write> Read for TlsStream<S> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.inner.read(buf)
-    }
-}
-
-impl<S: Read + Write> Write for TlsStream<S> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-
-impl<S: AsyncRead + AsyncWrite> AsyncRead for TlsStream<S> {
-}
-
-impl<S: AsyncRead + AsyncWrite> AsyncWrite for TlsStream<S> {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        try_nb!(self.inner.shutdown());
-        self.inner.get_mut().shutdown()
-    }
 }
 
 impl TlsConnector {
@@ -125,23 +121,31 @@ impl TlsConnector {
     /// example, a TCP connection to a remote server. That stream is then
     /// provided here to perform the client half of a connection to a
     /// TLS-powered server.
-    pub fn connect<S>(&self, domain: &str, stream: S) -> Connect<S>
+    pub fn connect<'a, S>(&'a self, domain: &'a str, stream: S) -> PendingTlsStream<S>
         where S: AsyncRead + AsyncWrite,
     {
-        Connect {
-            inner: MidHandshake {
-                inner: Some(self.inner.connect(domain, stream)),
-            },
+        let connect_result = self.inner.connect(domain, stream.compat()).map(|i| {
+            Handshake::Completed(i)
+        });
+        PendingTlsStream {
+            inner: Some(connect_result)
         }
     }
 }
 
 impl From<native_tls::TlsConnector> for TlsConnector {
-    fn from(inner: native_tls::TlsConnector) -> TlsConnector {
-        TlsConnector {
+    fn from(inner: native_tls::TlsConnector) -> Self {
+        Self {
             inner,
         }
     }
+}
+
+/// A wrapper around a `native_tls::TlsAcceptor`, providing an async `accept`
+/// method.
+#[derive(Clone)]
+pub struct TlsAcceptor {
+    inner: native_tls::TlsAcceptor,
 }
 
 impl TlsAcceptor {
@@ -155,61 +159,70 @@ impl TlsAcceptor {
     /// This is typically used after a new socket has been accepted from a
     /// `TcpListener`. That socket is then passed to this function to perform
     /// the server half of accepting a client connection.
-    pub fn accept<S>(&self, stream: S) -> Accept<S>
+    pub fn accept<S>(&self, stream: S) -> PendingTlsStream<S>
         where S: AsyncRead + AsyncWrite,
     {
-        Accept {
-            inner: MidHandshake {
-                inner: Some(self.inner.accept(stream)),
-            },
+        let accept_result = self.inner.accept(stream.compat()).map(|i| {
+            Handshake::Completed(i)
+        });
+        PendingTlsStream {
+            inner: Some(accept_result)
         }
     }
 }
 
 impl From<native_tls::TlsAcceptor> for TlsAcceptor {
-    fn from(inner: native_tls::TlsAcceptor) -> TlsAcceptor {
-        TlsAcceptor {
+    fn from(inner: native_tls::TlsAcceptor) -> Self {
+        Self {
             inner,
         }
     }
 }
 
-impl<S: AsyncRead + AsyncWrite> Future for Connect<S> {
-    type Item = TlsStream<S>;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<TlsStream<S>, Error> {
-        self.inner.poll()
-    }
+pub enum Handshake<S> {
+    Completed(NativeWrapperStream<S>),
+    Midhandshake(MidHandshakeTlsStream<Compat<S>>)
 }
 
-impl<S: AsyncRead + AsyncWrite> Future for Accept<S> {
-    type Item = TlsStream<S>;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<TlsStream<S>, Error> {
-        self.inner.poll()
-    }
+pub struct PendingTlsStream<S> {
+    inner: Option<Result<Handshake<S>, HandshakeError<Compat<S>>>>
 }
 
-impl<S: AsyncRead + AsyncWrite> Future for MidHandshake<S> {
-    type Item = TlsStream<S>;
-    type Error = Error;
+impl<S: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug> Future for PendingTlsStream<S> {
+    type Output = Result<TlsStream<S>, Error>;
 
-    fn poll(&mut self) -> Poll<TlsStream<S>, Error> {
-        match self.inner.take().expect("cannot poll MidHandshake twice") {
-            Ok(stream) => Ok(TlsStream { inner: stream }.into()),
-            Err(HandshakeError::Failure(e)) => Err(e),
-            Err(HandshakeError::WouldBlock(s)) => {
-                match s.handshake() {
-                    Ok(stream) => Ok(TlsStream { inner: stream }.into()),
-                    Err(HandshakeError::Failure(e)) => Err(e),
-                    Err(HandshakeError::WouldBlock(s)) => {
-                        self.inner = Some(Err(HandshakeError::WouldBlock(s)));
-                        Ok(Async::NotReady)
+    fn poll(mut self: Pin<&mut Self>, _lw: &LocalWaker) -> Poll<Self::Output> {
+        let this: &mut Self = &mut *self;
+        let inner = std::mem::replace(&mut this.inner, None);
+
+        match inner.expect("Cannot poll handshake twice") {
+            Ok(Handshake::Completed(native_stream)) => {
+                debug!("Connection was completed");
+                Poll::Ready(Ok(TlsStream { inner: native_stream }))
+            }
+            Ok(Handshake::Midhandshake(midhandshake_stream)) => {
+                debug!("Connection was interrupted mid handshake, attempting handshake");
+                match midhandshake_stream.handshake() {
+                    Ok(native_stream) => {
+                        debug!("Handshake completed, connection established");
+                        Poll::Ready(Ok(TlsStream { inner: native_stream }))
+                    },
+                    Err(HandshakeError::Failure(e)) => Poll::Ready(Err(e)),
+                    Err(HandshakeError::WouldBlock(midhandshake_stream)) => {
+                        debug!("Handshake interrupted, {:?}", midhandshake_stream);
+                        std::mem::replace(&mut this.inner, Some(Ok(Handshake::Midhandshake(midhandshake_stream))));
+                        Poll::Pending
                     }
                 }
+            }
+            Err(HandshakeError::Failure(e)) => Poll::Ready(Err(e)),
+            Err(HandshakeError::WouldBlock(midhandshake_stream)) => {
+                debug!("Handshake interrupted, {:?}", midhandshake_stream);
+                std::mem::replace(&mut this.inner, Some(Ok(Handshake::Midhandshake(midhandshake_stream))));
+                Poll::Pending
             }
         }
     }
 }
+
+
