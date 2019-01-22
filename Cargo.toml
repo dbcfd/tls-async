@@ -13,6 +13,7 @@ readme = "README.md"
 description = """
 TLS support for AsyncRead/AsyncWrite using native-tls
 """
+authors = ["Danny Browning <bdbrowning2@gmail.com>", "Carl Lerche <me@carllerche.com>"]
 categories = ["asynchronous", "network-programming"]
 
 [dependencies]
