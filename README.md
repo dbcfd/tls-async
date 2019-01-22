@@ -1,5 +1,10 @@
 # tls-async
 
+[![build status][travis-badge]][travis-url]
+[![crates.io version][crates-badge]][crates-url]
+[![docs.rs docs][docs-badge]][docs-url]
+[![MIT licensed][mit-badge]][mit-url]
+
 This is an experimental fork of [tokio-tls](https://github.com/tokio-rs/tokio/tree/master/tokio-tls) on top of [Futures 0.3](https://github.com/rust-lang-nursery/futures-rs) AsyncRead, AsyncWrite, and Compat. It is primarily intended for usage with [Romio](https://github.com/withoutboats/romio).
 
 An implementation of TLS/SSL streams for [Futures 0.3](https://github.com/rust-lang-nursery/futures-rs) built on top of the [`native-tls`
@@ -8,6 +13,15 @@ crate]
 [Documentation](https://docs.rs/tls-async/0.3.0-alpha.1/)
 
 [`native-tls` crate]: https://github.com/sfackler/rust-native-tls
+
+[travis-badge]: https://img.shields.io/travis/dbcfd/tls-async/master.svg?style=flat-square
+[travis-url]: https://travis-ci.org/dbcfd/tls-async
+[crates-badge]: https://img.shields.io/crates/v/tls-async.svg?style=flat-square
+[crates-url]: https://crates.io/crates/tls-async
+[docs-badge]: https://img.shields.io/badge/docs.rs-latest-blue.svg?style=flat-square
+[docs-url]: https://docs.rs/tls-async
+[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square
+[mit-url]: LICENSE-MIT
 
 ## Usage
 
