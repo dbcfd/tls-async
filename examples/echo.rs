@@ -7,7 +7,7 @@ use native_tls::Identity;
 async fn accept_connections() -> () {
     // Bind the server's socket
     let addr = "127.0.0.1:12345".parse().expect("Failed to parse address");
-    let tcp = romio::TcpListener::bind(&addr).expect("Failed to bind");
+    let mut tcp = romio::TcpListener::bind(&addr).expect("Failed to bind");
 
     // Create the TLS acceptor.
     let der = include_bytes!("identity.p12");

@@ -488,7 +488,7 @@ fn client_to_server() {
     drop(env_logger::try_init());
 
     // Create a server listening on a port, then figure out what that port is
-    let srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
+    let mut srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
     let addr = t!(srv.local_addr());
     let (server_cx, client_cx) = contexts();
 
@@ -527,7 +527,7 @@ fn server_to_client() {
     drop(env_logger::try_init());
 
     // Create a server listening on a port, then figure out what that port is
-    let srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
+    let mut srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
     let addr = t!(srv.local_addr());
     let (server_cx, client_cx) = contexts();
 
@@ -560,7 +560,7 @@ fn server_to_client() {
 fn one_byte_at_a_time() {
     drop(env_logger::try_init());
 
-    let srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
+    let mut srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
     let addr = t!(srv.local_addr());
     let (server_cx, client_cx) = contexts();
 

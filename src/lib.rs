@@ -18,7 +18,7 @@
 
 use std::io::{self, Read, Write};
 use std::pin::Pin;
-use std::task::LocalWaker;
+use std::task::Waker;
 
 use futures::Future;
 use futures::compat::Compat;
@@ -56,7 +56,7 @@ impl<S> TlsStream<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite> AsyncRead for TlsStream<S> {
-    fn poll_read(&mut self, _lw: &LocalWaker, buf: &mut [u8])
+    fn poll_read(&mut self, _lw: &Waker, buf: &mut [u8])
                  -> Poll<Result<usize, io::Error>> {
         match self.inner.read(buf) {
             Ok(sz) => Poll::Ready(Ok(sz)),
@@ -69,7 +69,7 @@ impl<S: AsyncRead + AsyncWrite> AsyncRead for TlsStream<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite> AsyncWrite for TlsStream<S> {
-    fn poll_write(&mut self, _lw: &LocalWaker, buf: &[u8])
+    fn poll_write(&mut self, _lw: &Waker, buf: &[u8])
                   -> Poll<Result<usize, io::Error>> {
         match self.inner.write(buf) {
             Ok(sz) => Poll::Ready(Ok(sz)),
@@ -80,7 +80,7 @@ impl<S: AsyncRead + AsyncWrite> AsyncWrite for TlsStream<S> {
         }
     }
 
-    fn poll_flush(&mut self, _lw: &LocalWaker) -> Poll<Result<(), io::Error>> {
+    fn poll_flush(&mut self, _lw: &Waker) -> Poll<Result<(), io::Error>> {
         match self.inner.flush() {
             Ok(sz) => Poll::Ready(Ok(sz)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -90,7 +90,7 @@ impl<S: AsyncRead + AsyncWrite> AsyncWrite for TlsStream<S> {
         }
     }
 
-    fn poll_close(&mut self, _lw: &LocalWaker) -> Poll<Result<(), io::Error>> {
+    fn poll_close(&mut self, _lw: &Waker) -> Poll<Result<(), io::Error>> {
         match self.inner.shutdown() {
             Ok(sz) => Poll::Ready(Ok(sz)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -191,7 +191,7 @@ pub struct PendingTlsStream<S> {
 impl<S: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug> Future for PendingTlsStream<S> {
     type Output = Result<TlsStream<S>, Error>;
 
-    fn poll(mut self: Pin<&mut Self>, _lw: &LocalWaker) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, _lw: &Waker) -> Poll<Self::Output> {
         let this: &mut Self = &mut *self;
         let inner = std::mem::replace(&mut this.inner, None);
 
