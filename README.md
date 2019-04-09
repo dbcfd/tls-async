@@ -10,7 +10,7 @@ This is an experimental fork of [tokio-tls](https://github.com/tokio-rs/tokio/tr
 An implementation of TLS/SSL streams for [Futures 0.3](https://github.com/rust-lang-nursery/futures-rs) built on top of the [`native-tls`
 crate]
 
-[Documentation](https://docs.rs/tls-async/0.3.0-alpha.1/)
+[Documentation](https://docs.rs/tls-async/0.3.0-alpha.3/)
 
 [`native-tls` crate]: https://github.com/sfackler/rust-native-tls
 
@@ -29,8 +29,7 @@ First, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-native-tls = "0.2"
-tls-async = "0.3.0-alpha.1"
+tls-async = "0.3.0-alpha.3"
 ```
 
 Next, add this to your crate:

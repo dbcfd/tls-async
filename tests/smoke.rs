@@ -2,11 +2,10 @@
 use std::io::Write;
 use std::process::Command;
 
-use tls_async::{TlsAcceptor as TlsAsyncAcceptor, TlsConnector as TlsAsyncConnector};
+use tls_async::{Identity, TlsAcceptor, TlsConnector};
 use cfg_if::cfg_if;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::{FutureExt, StreamExt, TryFutureExt};
-use native_tls::{TlsConnector as NativeTlsConnector, TlsAcceptor as NativeTlsAcceptor, Identity};
 use romio::{TcpStream, TcpListener};
 
 macro_rules! t {
@@ -226,14 +225,14 @@ cfg_if! {
         use std::env;
         use std::fs::File;
 
-        fn contexts() -> (TlsAsyncAcceptor, TlsAsyncConnector) {
+        fn contexts() -> (TlsAcceptor, TlsConnector) {
             let keys = openssl_keys();
 
             let pkcs12 = t!(Identity::from_pkcs12(&keys.pkcs12_der, "foobar"));
-            let srv = NativeTlsAcceptor::builder(pkcs12);
+            let srv = TlsAcceptor::builder(pkcs12);
 
-            let cert = native_tls::Certificate::from_der(&keys.cert_der).unwrap();
-            let mut client = NativeTlsConnector::builder();
+            let cert = tls_async::Certificate::from_der(&keys.cert_der).unwrap();
+            let mut client = TlsConnector::builder();
             client.add_root_certificate(cert);
 
             (t!(srv.build()).into(), t!(client.build()).into())
@@ -269,8 +268,8 @@ cfg_if! {
             let pkcs12_der = t!(store.export_pkcs12("foobar"));
             let pkcs12 = t!(Identity::from_pkcs12(&pkcs12_der, "foobar"));
 
-            let srv = NativeTlsAcceptor::builder(pkcs12);
-            let client = NativeTlsConnector::builder();
+            let srv = TlsAcceptor::builder(pkcs12);
+            let client = TlsConnector::builder();
             (t!(srv.build()).into(), t!(client.build()).into())
         }
 

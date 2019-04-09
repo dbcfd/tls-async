@@ -3,8 +3,8 @@ use std::net::ToSocketAddrs;
 
 use futures::{FutureExt, TryFutureExt};
 use futures::io::{AsyncReadExt, AsyncWriteExt};
-use native_tls::TlsConnector;
 use romio::TcpStream;
+use tls_async::TlsConnector;
 use tokio::runtime::Runtime;
 
 fn main() {
@@ -19,7 +19,6 @@ fn main() {
 
         let socket = await!(TcpStream::connect(&addr)).expect("Could not connect");
         let cx = TlsConnector::builder().build().expect("Could not build");
-        let cx = tls_async::TlsConnector::from(cx);
 
         let mut socket = await!(cx.connect("www.rust-lang.org", socket)).expect("Could not form tls connection");
         let _ = await!(socket.write_all(b"\
