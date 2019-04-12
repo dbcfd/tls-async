@@ -36,7 +36,6 @@ cfg_if! {
         extern crate openssl;
 
         fn assert_bad_hostname_error(err: Error) {
-            let err = err.compat().to_string();
             check_cause(err, "certificate verify failed");
         }
     } else if #[cfg(any(target_os = "macos", target_os = "ios"))] {
