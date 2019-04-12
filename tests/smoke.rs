@@ -206,15 +206,15 @@ cfg_if! {
         use std::env;
         use std::sync::{Once, ONCE_INIT};
 
-        fn contexts() -> (TlsAsyncAcceptor, TlsAsyncConnector) {
+        fn contexts() -> (TlsAcceptor, TlsConnector) {
             let keys = openssl_keys();
 
             let pkcs12 = t!(Identity::from_pkcs12(&keys.pkcs12_der, "foobar"));
-            let srv = NativeTlsAcceptor::builder(pkcs12);
+            let srv = TlsAcceptor::builder(pkcs12);
 
-            let cert = t!(native_tls::Certificate::from_der(&keys.cert_der));
+            let cert = t!(tls_async::Certificate::from_der(&keys.cert_der));
 
-            let mut client = NativeTlsConnector::builder();
+            let mut client = TlsConnector::builder();
             t!(client.add_root_certificate(cert).build());
 
             (t!(srv.build()).into(), t!(client.build()).into())
@@ -261,7 +261,7 @@ cfg_if! {
 
         const FRIENDLY_NAME: &'static str = "tls-async localhost testing cert";
 
-        fn contexts() -> (TlsAsyncAcceptor, TlsAsyncConnector) {
+        fn contexts() -> (TlsAcceptor, TlsConnector) {
             let cert = localhost_cert();
             let mut store = t!(Memory::new()).into_store();
             t!(store.add_cert(&cert, CertAdd::Always));
