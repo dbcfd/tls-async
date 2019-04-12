@@ -47,7 +47,6 @@ cfg_if! {
         use openssl;
 
         fn verify_failed(err: Error) {
-            let err = err.compat().to_string();
             check_cause(err, "certificate verify failed")        ;
         }
 
