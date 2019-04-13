@@ -1,13 +1,21 @@
 #![feature(async_await, await_macro, futures_api)]
-
-use std::io;
 use std::net::ToSocketAddrs;
 
 use cfg_if::cfg_if;
 use futures::{FutureExt, TryFutureExt};
 use futures::io::{AsyncReadExt, AsyncWriteExt};
-use native_tls::TlsConnector;
 use romio::TcpStream;
+use tls_async::{Error, TlsConnector};
+
+fn check_cause(err: Error, s: &str) {
+    match err {
+        Error::Handshake(e) => {
+            let err = e.to_string();
+            assert!(e.to_string().contains(s), "Error {} did not contain {}", err, s);
+        }
+        _ => panic!("Error {:?} was not a handshake error")
+    }
+}
 
 macro_rules! t {
     ($e:expr) => (match $e {
@@ -18,9 +26,8 @@ macro_rules! t {
 
 cfg_if! {
     if #[cfg(feature = "force-rustls")] {
-        fn assert_bad_hostname_error(err: &io::Error) {
-            let err = err.to_string();
-            assert!(err.contains("CertNotValidForName"), "bad error: {}", err);
+        fn assert_bad_hostname_error(err: Error) {
+            check_cause(err, "CertNotValidForName");
         }
     } else if #[cfg(any(feature = "force-openssl",
                         all(not(target_os = "macos"),
@@ -28,28 +35,19 @@ cfg_if! {
                             not(target_os = "ios"))))] {
         extern crate openssl;
 
-        fn assert_bad_hostname_error(err: &io::Error) {
-            let err = err.get_ref().unwrap();
-            let err = err.downcast_ref::<native_tls::Error>().unwrap();
-            assert!(format!("{}", err).contains("certificate verify failed"));
+        fn assert_bad_hostname_error(err: Error) {
+            check_cause(err, "certificate verify failed");
         }
     } else if #[cfg(any(target_os = "macos", target_os = "ios"))] {
-        fn assert_bad_hostname_error(err: &io::Error) {
-            let err = err.get_ref().unwrap();
-            let err = err.downcast_ref::<native_tls::Error>().unwrap();
-            assert!(format!("{}", err).contains("was not trusted."));
+        fn assert_bad_hostname_error(err: Error) {
+            check_cause(err, "was not trusted.");
         }
     } else {
-        fn assert_bad_hostname_error(err: &io::Error) {
-            let err = err.get_ref().unwrap();
-            let err = err.downcast_ref::<native_tls::Error>().unwrap();
-            assert!(format!("{}", err).contains("CN name"));
+        fn assert_bad_hostname_error(err: Error) {
+            let err = err.compat().to_string();
+            check_cause(err, "CN name");
         }
     }
-}
-
-fn native2io(e: native_tls::Error) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e)
 }
 
 #[test]
@@ -67,8 +65,7 @@ fn fetch_google() {
         // Send off the request by first negotiating an SSL handshake, then writing
         // of our request, then flushing, then finally read off the response.
         let builder = TlsConnector::builder();
-        let cx = t!(builder.build());
-        let connector = tls_async::TlsConnector::from(cx);
+        let connector = t!(builder.build());
 
         println!("Attempting tls connection");
 
@@ -105,7 +102,6 @@ fn wrong_hostname_error() {
         let socket = t!(await!(TcpStream::connect(&addr)));
         let builder = TlsConnector::builder();
         let connector = t!(builder.build());
-        let connector = tls_async::TlsConnector::from(connector);
         await!(connector.connect("rust-lang.org", socket))
     };
 
@@ -113,5 +109,5 @@ fn wrong_hostname_error() {
     let res = rt.block_on(fut_result.fuse().boxed().compat());
 
     assert!(res.is_err());
-    assert_bad_hostname_error(&native2io(res.err().unwrap()));
+    assert_bad_hostname_error(res.err().unwrap());
 }
