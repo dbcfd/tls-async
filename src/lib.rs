@@ -25,7 +25,8 @@ pub use connector::TlsConnector as TlsConnector;
 pub use errors::Error as Error;
 
 use std::io::{self, Read, Write};
-use std::task::Waker;
+use std::pin::Pin;
+use std::task::Context;
 
 use futures::compat::Compat;
 use futures::io::{AsyncRead, AsyncWrite};
@@ -56,12 +57,18 @@ impl<S> TlsStream<S> {
     pub fn get_mut(&mut self) -> &mut native_tls::TlsStream<Compat<S>> {
         &mut self.inner
     }
+
+    fn inner<'a>(self: Pin<&'a mut Self>) -> &'a mut native_tls::TlsStream<Compat<S>> {
+        unsafe {
+            &mut Pin::get_unchecked_mut(self).inner
+        }
+    }
 }
 
-impl<S: AsyncRead + AsyncWrite> AsyncRead for TlsStream<S> {
-    fn poll_read(&mut self, _lw: &Waker, buf: &mut [u8])
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsStream<S> {
+    fn poll_read(mut self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &mut [u8])
                  -> Poll<Result<usize, io::Error>> {
-        match self.inner.read(buf) {
+        match self.as_mut().inner().read(buf) {
             Ok(sz) => Poll::Ready(Ok(sz)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 Poll::Pending
@@ -71,10 +78,10 @@ impl<S: AsyncRead + AsyncWrite> AsyncRead for TlsStream<S> {
     }
 }
 
-impl<S: AsyncRead + AsyncWrite> AsyncWrite for TlsStream<S> {
-    fn poll_write(&mut self, _lw: &Waker, buf: &[u8])
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsStream<S> {
+    fn poll_write(mut self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &[u8])
                   -> Poll<Result<usize, io::Error>> {
-        match self.inner.write(buf) {
+        match self.as_mut().inner().write(buf) {
             Ok(sz) => Poll::Ready(Ok(sz)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 Poll::Pending
@@ -83,8 +90,8 @@ impl<S: AsyncRead + AsyncWrite> AsyncWrite for TlsStream<S> {
         }
     }
 
-    fn poll_flush(&mut self, _lw: &Waker) -> Poll<Result<(), io::Error>> {
-        match self.inner.flush() {
+    fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        match self.as_mut().inner().flush() {
             Ok(sz) => Poll::Ready(Ok(sz)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 Poll::Pending
@@ -93,8 +100,8 @@ impl<S: AsyncRead + AsyncWrite> AsyncWrite for TlsStream<S> {
         }
     }
 
-    fn poll_close(&mut self, _lw: &Waker) -> Poll<Result<(), io::Error>> {
-        match self.inner.shutdown() {
+    fn poll_close(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        match self.as_mut().inner().shutdown() {
             Ok(sz) => Poll::Ready(Ok(sz)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 Poll::Pending

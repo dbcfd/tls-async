@@ -2,7 +2,7 @@ use crate::errors::Error;
 use crate::TlsStream;
 
 use std::pin::Pin;
-use std::task::Waker;
+use std::task::Context;
 
 use futures::Future;
 use futures::compat::Compat;
@@ -57,10 +57,10 @@ impl<S> PendingTlsStream<S> {
     }
 }
 
-impl<S: AsyncRead + AsyncWrite + std::fmt::Debug> Future for PendingTlsStream<S> {
+impl<S: AsyncRead + AsyncWrite + std::fmt::Debug + Unpin> Future for PendingTlsStream<S> {
     type Output = Result<TlsStream<S>, Error>;
 
-    fn poll(mut self: Pin<&mut Self>, _lw: &Waker) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             let handshake = std::mem::replace(self.as_mut().inner(), Handshake::Error(Error::RepeatedHandshake));
             match handshake {

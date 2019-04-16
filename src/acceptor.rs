@@ -118,7 +118,7 @@ impl TlsAcceptor {
     /// `TcpListener`. That socket is then passed to this function to perform
     /// the server half of accepting a client connection.
     pub fn accept<S>(&self, stream: S) -> PendingTlsStream<S>
-        where S: AsyncRead + AsyncWrite,
+        where S: AsyncRead + AsyncWrite + Unpin,
     {
         PendingTlsStream::new(self.inner.accept(stream.compat()))
     }
