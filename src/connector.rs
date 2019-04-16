@@ -156,7 +156,7 @@ impl TlsConnector {
     /// provided here to perform the client half of a connection to a
     /// TLS-powered server.
     pub fn connect<'a, S>(&'a self, domain: &'a str, stream: S) -> PendingTlsStream<S>
-        where S: AsyncRead + AsyncWrite,
+        where S: AsyncRead + AsyncWrite + Unpin,
     {
         PendingTlsStream::new(self.inner.connect(domain, stream.compat()))
     }
