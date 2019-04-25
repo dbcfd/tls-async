@@ -1,4 +1,4 @@
-#![feature(async_await, await_macro, futures_api)]
+#![feature(async_await, await_macro)]
 use std::net::ToSocketAddrs;
 
 use futures::{FutureExt, TryFutureExt};

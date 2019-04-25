@@ -14,7 +14,7 @@
 //! functionality provided by the `native-tls` crate, on which this crate is
 //! built. Configuration of TLS parameters is still primarily done through the
 //! `native-tls` crate.
-#![feature(async_await, await_macro, futures_api)]
+#![feature(async_await, await_macro)]
 mod acceptor;
 mod connector;
 mod errors;
