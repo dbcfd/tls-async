@@ -1,4 +1,4 @@
-#![feature(async_await, await_macro, futures_api)]
+#![feature(async_await)]
 // A tiny async TLS echo server with Tokio
 use futures::{FutureExt, TryFutureExt, StreamExt};
 use futures::io::AsyncReadExt;
@@ -18,16 +18,16 @@ async fn accept_connections() -> () {
 
     // Iterate incoming connections
     let mut tcp_incoming = tcp.incoming();
-    while let Some(tcp) = await!(tcp_incoming.next()) {
+    while let Some(tcp) = tcp_incoming.next().await {
         let tcp = tcp.expect("Error encountered while fetching next");
         let tcp = tls_acceptor.accept(tcp);
         let tls = async {
-            let tls = await!(tcp).expect("Failed to form tls connection");
+            let tls = tcp.await.expect("Failed to form tls connection");
             // Split up the read and write halves
             let (mut reader, mut writer) = tls.split();
 
             // Copy the data back to the client
-            match await!(reader.copy_into(&mut writer)) {
+            match reader.copy_into(&mut writer).await {
                 Ok(n) => println!("wrote {} bytes", n),
                 Err(err) => println!("IO error {:?}", err)
             }

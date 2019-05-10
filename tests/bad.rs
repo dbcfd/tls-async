@@ -1,4 +1,4 @@
-#![feature(async_await, await_macro)]
+#![feature(async_await)]
 use std::net::ToSocketAddrs;
 
 use cfg_if::cfg_if;
@@ -87,17 +87,17 @@ async fn get_host(host: String) -> Result<(), Error> {
     let addr = format!("{}:443", host);
     let addr = t!(addr.to_socket_addrs()).next().unwrap();
 
-    let socket = t!(await!(TcpStream::connect(&addr)));
+    let socket = t!(TcpStream::connect(&addr).await);
     let builder = TlsConnector::builder();
     let cx = t!(builder.build());
-    await!(cx.connect(&host, socket))?;
+    cx.connect(&host, socket).await?;
     Ok(())
 }
 
 #[test]
 fn expired() {
     let fut_res = async {
-        await!(get_host("expired.badssl.com".to_owned()))
+        get_host("expired.badssl.com".to_owned()).await
     };
     let mut rt = t!(tokio::runtime::Runtime::new());
     let res = rt.block_on(fut_res.boxed().compat());
@@ -112,7 +112,7 @@ fn expired() {
 #[cfg_attr(all(target_os = "macos", feature = "force-openssl"), ignore)]
 fn wrong_host() {
     let fut_res = async {
-        await!(get_host("wrong.host.badssl.com".to_owned()))
+        get_host("wrong.host.badssl.com".to_owned()).await
     };
     let mut rt = t!(tokio::runtime::Runtime::new());
     let res = rt.block_on(fut_res.boxed().compat());
@@ -124,7 +124,7 @@ fn wrong_host() {
 #[test]
 fn self_signed() {
     let fut_res = async {
-        await!(get_host("self-signed.badssl.com".to_owned()))
+        get_host("self-signed.badssl.com".to_owned()).await
     };
     let mut rt = t!(tokio::runtime::Runtime::new());
     let res = rt.block_on(fut_res.boxed().compat());
@@ -136,7 +136,7 @@ fn self_signed() {
 #[test]
 fn untrusted_root() {
     let fut_res = async {
-        await!(get_host("untrusted-root.badssl.com".to_owned()))
+        get_host("untrusted-root.badssl.com".to_owned()).await
     };
     let mut rt = t!(tokio::runtime::Runtime::new());
     let res = rt.block_on(fut_res.boxed().compat());

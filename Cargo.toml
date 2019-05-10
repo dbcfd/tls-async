@@ -7,7 +7,7 @@ edition = "2018"
 # - Update CHANGELOG.md.
 # - Update doc URL.
 # - Create "v0.1.x" git tag.
-version = "0.3.0-alpha.5"
+version = "0.3.0-alpha.6"
 license = "MIT"
 readme = "README.md"
 description = """
@@ -15,7 +15,7 @@ TLS support for AsyncRead/AsyncWrite using native-tls
 """
 authors = ["Danny Browning <bdbrowning2@gmail.com>", "Carl Lerche <me@carllerche.com>"]
 categories = ["asynchronous", "network-programming"]
-documentation = "https://docs.rs/tls-async/0.3.0-alpha.5/tls_async/"
+documentation = "https://docs.rs/tls-async/"
 repository = "https://github.com/dbcfd/tls-async"
 
 [dependencies]
@@ -25,13 +25,13 @@ log = "0.4.1"
 native-tls = "0.2"
 
 [dependencies.futures]
-version = "0.3.0-alpha.14"
+version = "0.3.0-alpha.16"
 package = "futures-preview"
 features = ["compat", "io-compat", "std"]
 
 [dev-dependencies]
 cfg-if = "0.1"
-romio = "0.3.0-alpha.5"
+romio = "0.3.0-alpha.8"
 tokio = "0.1"
 
 [dev-dependencies.env_logger]

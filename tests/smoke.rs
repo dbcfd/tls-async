@@ -1,4 +1,4 @@
-#![feature(async_await, await_macro)]
+#![feature(async_await)]
 use std::io::Write;
 use std::process::Command;
 
@@ -495,22 +495,22 @@ fn client_to_server() {
     // read all the data from it.
     let fut_server = async move {
         let mut incoming = srv.incoming();
-        let socket = t!(await!(incoming.next()).unwrap());
+        let socket = t!(incoming.next().await.unwrap());
         let f = server_cx.accept(socket);
-        let mut stream = t!(await!(f));
+        let mut stream = t!(f.await);
         let mut buf = vec![];
-        t!(await!(stream.read_to_end(&mut buf)));
+        t!(stream.read_to_end(&mut buf).await);
         buf
     };
 
     let fut_client = async move {
         // Create a future to connect to our server, connect the ssl stream, and
         // then write a bunch of data to it.
-        let socket = t!(await!(TcpStream::connect(&addr)));
-        let mut socket = t!(await!(client_cx.connect("localhost", socket)));
-        t!(await!(socket.write_all(&EXPECTED)));
-        t!(await!(socket.flush()));
-        t!(await!(socket.close()));
+        let socket = t!(TcpStream::connect(&addr).await);
+        let mut socket = t!(client_cx.connect("localhost", socket).await);
+        t!(socket.write_all(&EXPECTED).await);
+        t!(socket.flush().await);
+        t!(socket.close().await);
     };
 
     // Finally, run everything!
@@ -532,18 +532,18 @@ fn server_to_client() {
 
     let fut_server = async move {
         let mut incoming = srv.incoming();
-        let socket = t!(await!(incoming.next()).unwrap());
-        let mut socket = t!(await!(server_cx.accept(socket)));
-        t!(await!(socket.write_all(&EXPECTED)));
-        t!(await!(socket.flush()));
-        t!(await!(socket.close()));
+        let socket = t!(incoming.next().await.unwrap());
+        let mut socket = t!(server_cx.accept(socket).await);
+        t!(socket.write_all(&EXPECTED).await);
+        t!(socket.flush().await);
+        t!(socket.close().await);
     };
 
     let fut_client = async move {
-        let socket = t!(await!(TcpStream::connect(&addr)));
-        let mut stream = t!(await!(client_cx.connect("localhost", socket)));
+        let socket = t!(TcpStream::connect(&addr).await);
+        let mut stream = t!(client_cx.connect("localhost", socket).await);
         let mut buf = vec![];
-        t!(await!(stream.read_to_end(&mut buf)));
+        t!(stream.read_to_end(&mut buf).await);
         buf
     };
 
@@ -565,21 +565,21 @@ fn one_byte_at_a_time() {
 
     let fut_server = async move {
         let mut incoming = srv.incoming();
-        let socket = t!(await!(incoming.next()).unwrap());
-        let mut stream = t!(await!(server_cx.accept(socket)));
+        let socket = t!(incoming.next().await.unwrap());
+        let mut stream = t!(server_cx.accept(socket).await);
         for byte in SMALL_EXPECTED.iter().cloned() {
             let to_send = [byte];
-            t!(await!(stream.write_all(&to_send)));
-            t!(await!(stream.flush()));
+            t!(stream.write_all(&to_send).await);
+            t!(stream.flush().await);
         }
-        t!(await!(stream.close()));
+        t!(stream.close().await);
     };
 
     let fut_client = async move {
-        let socket = t!(await!(TcpStream::connect(&addr)));
-        let mut stream = t!(await!(client_cx.connect("localhost", socket)));
+        let socket = t!(TcpStream::connect(&addr).await);
+        let mut stream = t!(client_cx.connect("localhost", socket).await);
         let mut buf = vec![];
-        t!(await!(stream.read_to_end(&mut buf)));
+        t!(stream.read_to_end(&mut buf).await);
         buf
     };
 
