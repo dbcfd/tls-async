@@ -1,4 +1,4 @@
-#![feature(async_await, await_macro)]
+#![feature(async_await)]
 use std::net::ToSocketAddrs;
 
 use cfg_if::cfg_if;
@@ -58,7 +58,7 @@ fn fetch_google() {
         // First up, resolve google.com
         let addr = t!("google.com:443".to_socket_addrs()).next().unwrap();
 
-        let socket = t!(await!(TcpStream::connect(&addr)));
+        let socket = t!(TcpStream::connect(&addr).await);
 
         println!("Connected to google");
 
@@ -69,12 +69,12 @@ fn fetch_google() {
 
         println!("Attempting tls connection");
 
-        let mut stream = t!(await!(connector.connect("google.com", socket)));
-        t!(await!(stream.write_all(b"GET / HTTP/1.0\r\n\r\n")));
-        t!(await!(stream.flush()));
+        let mut stream = t!(connector.connect("google.com", socket).await);
+        t!(stream.write_all(b"GET / HTTP/1.0\r\n\r\n").await);
+        t!(stream.flush().await);
         let mut buf = vec![];
-        t!(await!(stream.read_to_end(&mut buf)));
-        t!(await!(stream.close()));
+        t!(stream.read_to_end(&mut buf).await);
+        t!(stream.close().await);
         buf
     };
 
@@ -99,10 +99,10 @@ fn wrong_hostname_error() {
 
     let fut_result = async {
         let addr = t!("google.com:443".to_socket_addrs()).next().unwrap();
-        let socket = t!(await!(TcpStream::connect(&addr)));
+        let socket = t!(TcpStream::connect(&addr).await);
         let builder = TlsConnector::builder();
         let connector = t!(builder.build());
-        await!(connector.connect("rust-lang.org", socket))
+        connector.connect("rust-lang.org", socket).await
     };
 
     let mut rt = t!(tokio::runtime::Runtime::new());
