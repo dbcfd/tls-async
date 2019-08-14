@@ -14,8 +14,8 @@ crate]
 
 [`native-tls` crate]: https://github.com/sfackler/rust-native-tls
 
-[travis-badge]: https://img.shields.io/travis/dbcfd/tls-async/master.svg?style=flat-square
-[travis-url]: https://travis-ci.com/dbcfd/tls-async.svg?branch=master
+[travis-badge]: https://travis-ci.com/dbcfd/tls-async.svg?branch=master
+[travis-url]: https://travis-ci.com/dbcfd/tls-async
 [crates-badge]: https://img.shields.io/crates/v/tls-async.svg?style=flat-square
 [crates-url]: https://crates.io/crates/tls-async
 [docs-badge]: https://img.shields.io/badge/docs.rs-latest-blue.svg?style=flat-square
