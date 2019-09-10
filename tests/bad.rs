@@ -1,26 +1,27 @@
-#![feature(async_await)]
 use std::net::ToSocketAddrs;
 
 use cfg_if::cfg_if;
-use futures::{FutureExt, TryFutureExt};
-use romio::TcpStream;
+use futures::FutureExt;
+use futures_tokio_compat::Compat;
 use tls_async::{Error, TlsConnector};
+use tokio::net::TcpStream;
 
 fn check_cause(err: Error, s: &str) {
-    match err {
-        Error::Handshake(e) => {
-            let err = e.to_string();
-            assert!(e.to_string().contains(s), "Error {} did not contain {}", err, s);
-        }
-        _ => panic!("Error {:?} was not a handshake error")
-    }
+    assert!(
+        err.to_string().contains(s),
+        "Error {} did not contain {}",
+        err,
+        s
+    );
 }
 
 macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(e) => e,
+            Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
+        }
+    };
 }
 
 cfg_if! {
@@ -44,7 +45,7 @@ cfg_if! {
                         all(not(target_os = "macos"),
                             not(target_os = "windows"),
                             not(target_os = "ios"))))] {
-        use openssl;
+
 
         fn verify_failed(err: Error) {
             check_cause(err, "certificate verify failed")        ;
@@ -87,7 +88,7 @@ async fn get_host(host: String) -> Result<(), Error> {
     let addr = format!("{}:443", host);
     let addr = t!(addr.to_socket_addrs()).next().unwrap();
 
-    let socket = t!(TcpStream::connect(&addr).await);
+    let socket = Compat::new(t!(TcpStream::connect(&addr).await));
     let builder = TlsConnector::builder();
     let cx = t!(builder.build());
     cx.connect(&host, socket).await?;
@@ -96,11 +97,9 @@ async fn get_host(host: String) -> Result<(), Error> {
 
 #[test]
 fn expired() {
-    let fut_res = async {
-        get_host("expired.badssl.com".to_owned()).await
-    };
-    let mut rt = t!(tokio::runtime::Runtime::new());
-    let res = rt.block_on(fut_res.boxed().compat());
+    let fut_res = async { get_host("expired.badssl.com".to_owned()).await };
+    let rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_res.boxed());
 
     assert!(res.is_err());
     assert_expired_error(res.err().unwrap());
@@ -111,11 +110,9 @@ fn expired() {
 #[test]
 #[cfg_attr(all(target_os = "macos", feature = "force-openssl"), ignore)]
 fn wrong_host() {
-    let fut_res = async {
-        get_host("wrong.host.badssl.com".to_owned()).await
-    };
-    let mut rt = t!(tokio::runtime::Runtime::new());
-    let res = rt.block_on(fut_res.boxed().compat());
+    let fut_res = async { get_host("wrong.host.badssl.com".to_owned()).await };
+    let rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_res.boxed());
 
     assert!(res.is_err());
     assert_wrong_host(res.err().unwrap());
@@ -123,11 +120,9 @@ fn wrong_host() {
 
 #[test]
 fn self_signed() {
-    let fut_res = async {
-        get_host("self-signed.badssl.com".to_owned()).await
-    };
-    let mut rt = t!(tokio::runtime::Runtime::new());
-    let res = rt.block_on(fut_res.boxed().compat());
+    let fut_res = async { get_host("self-signed.badssl.com".to_owned()).await };
+    let rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_res.boxed());
 
     assert!(res.is_err());
     assert_self_signed(res.err().unwrap());
@@ -135,11 +130,9 @@ fn self_signed() {
 
 #[test]
 fn untrusted_root() {
-    let fut_res = async {
-        get_host("untrusted-root.badssl.com".to_owned()).await
-    };
-    let mut rt = t!(tokio::runtime::Runtime::new());
-    let res = rt.block_on(fut_res.boxed().compat());
+    let fut_res = async { get_host("untrusted-root.badssl.com".to_owned()).await };
+    let rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_res.boxed());
 
     assert!(res.is_err());
     assert_untrusted_root(res.err().unwrap());

@@ -1,18 +1,20 @@
-#![feature(async_await)]
 use std::io::Write;
 use std::process::Command;
 
-use tls_async::{Identity, TlsAcceptor, TlsConnector};
 use cfg_if::cfg_if;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
-use futures::{FutureExt, StreamExt, TryFutureExt};
-use romio::{TcpStream, TcpListener};
+use futures::{FutureExt, StreamExt};
+use futures_tokio_compat::Compat;
+use tls_async::{Identity, TlsAcceptor, TlsConnector};
+use tokio::net::{TcpListener, TcpStream};
 
 macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(e) => e,
+            Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
+        }
+    };
 }
 
 #[allow(dead_code)]
@@ -24,7 +26,7 @@ struct Keys {
 
 #[allow(dead_code)]
 fn openssl_keys() -> &'static Keys {
-    static INIT: std::sync::Once = std::sync::ONCE_INIT;
+    static INIT: std::sync::Once = std::sync::Once::new();
     static mut KEYS: *mut Keys = 0 as *mut _;
 
     INIT.call_once(|| {
@@ -34,7 +36,10 @@ fn openssl_keys() -> &'static Keys {
         let certfile = path.join("test.crt");
         let config = path.join("openssl.config");
 
-        File::create(&config).unwrap().write_all(b"\
+        File::create(&config)
+            .unwrap()
+            .write_all(
+                b"\
             [req]\n\
             distinguished_name=dn\n\
             [ dn ]\n\
@@ -44,44 +49,60 @@ fn openssl_keys() -> &'static Keys {
             subjectAltName = @alt_names
             [alt_names]
             DNS.1 = localhost
-        ").unwrap();
+        ",
+            )
+            .unwrap();
 
         let subj = "/C=US/ST=Denial/L=Sprintfield/O=Dis/CN=localhost";
         let output = t!(Command::new("openssl")
-                                .arg("req")
-                                .arg("-nodes")
-                                .arg("-x509")
-                                .arg("-newkey").arg("rsa:2048")
-                                .arg("-config").arg(&config)
-                                .arg("-extensions").arg("ext")
-                                .arg("-subj").arg(subj)
-                                .arg("-keyout").arg(&keyfile)
-                                .arg("-out").arg(&certfile)
-                                .arg("-days").arg("1")
-                                .output());
+            .arg("req")
+            .arg("-nodes")
+            .arg("-x509")
+            .arg("-newkey")
+            .arg("rsa:2048")
+            .arg("-config")
+            .arg(&config)
+            .arg("-extensions")
+            .arg("ext")
+            .arg("-subj")
+            .arg(subj)
+            .arg("-keyout")
+            .arg(&keyfile)
+            .arg("-out")
+            .arg(&certfile)
+            .arg("-days")
+            .arg("1")
+            .output());
         assert!(output.status.success());
 
         let crtout = t!(Command::new("openssl")
-                                .arg("x509")
-                                .arg("-outform").arg("der")
-                                .arg("-in").arg(&certfile)
-                                .output());
+            .arg("x509")
+            .arg("-outform")
+            .arg("der")
+            .arg("-in")
+            .arg(&certfile)
+            .output());
         assert!(crtout.status.success());
         let keyout = t!(Command::new("openssl")
-                                .arg("rsa")
-                                .arg("-outform").arg("der")
-                                .arg("-in").arg(&keyfile)
-                                .output());
+            .arg("rsa")
+            .arg("-outform")
+            .arg("der")
+            .arg("-in")
+            .arg(&keyfile)
+            .output());
         assert!(keyout.status.success());
 
         let pkcs12out = t!(Command::new("openssl")
-                                   .arg("pkcs12")
-                                   .arg("-export")
-                                   .arg("-nodes")
-                                   .arg("-inkey").arg(&keyfile)
-                                   .arg("-in").arg(&certfile)
-                                   .arg("-password").arg("pass:foobar")
-                                   .output());
+            .arg("pkcs12")
+            .arg("-export")
+            .arg("-nodes")
+            .arg("-inkey")
+            .arg(&keyfile)
+            .arg("-in")
+            .arg(&certfile)
+            .arg("-password")
+            .arg("pass:foobar")
+            .output());
         assert!(pkcs12out.status.success());
 
         let keys = Box::new(Keys {
@@ -93,9 +114,7 @@ fn openssl_keys() -> &'static Keys {
             KEYS = Box::into_raw(keys);
         }
     });
-    unsafe {
-        &*KEYS
-    }
+    unsafe { &*KEYS }
 }
 
 cfg_if! {
@@ -106,7 +125,7 @@ cfg_if! {
         use std::env;
         use std::fs::File;
         use std::process::Command;
-        use std::sync::{ONCE_INIT, Once};
+        use std::sync::Once;
 
         use untrusted::Input;
         use webpki::trust_anchor_util;
@@ -135,7 +154,7 @@ cfg_if! {
         // Right now I don't know of a way to programmatically create a
         // self-signed certificate, so we just fork out to the `openssl` binary.
         fn keys() -> (&'static [u8], &'static [u8]) {
-            static INIT: Once = ONCE_INIT;
+            static INIT: Once = Once::new();
             static mut KEYS: *mut (Vec<u8>, Vec<u8>) = 0 as *mut _;
 
             INIT.call_once(|| {
@@ -204,7 +223,7 @@ cfg_if! {
 
         use std::fs::File;
         use std::env;
-        use std::sync::{Once, ONCE_INIT};
+
 
         fn contexts() -> (TlsAcceptor, TlsConnector) {
             let keys = openssl_keys();
@@ -246,7 +265,7 @@ cfg_if! {
         use std::io::Error;
         use std::mem;
         use std::ptr;
-        use std::sync::{Once, ONCE_INIT};
+        use std::sync::Once;
 
         use schannel::cert_context::CertContext;
         use schannel::cert_store::{CertStore, CertAdd, Memory};
@@ -291,7 +310,7 @@ cfg_if! {
         // for a small period of time (e.g. 1 day).
 
         fn localhost_cert() -> CertContext {
-            static INIT: Once = ONCE_INIT;
+            static INIT: Once = Once::new();
             INIT.call_once(|| {
                 for cert in local_root_store().certs() {
                     let name = match cert.friendly_name() {
@@ -486,16 +505,25 @@ const SMALL_EXPECTED: [u8; SMALL_AMT] = [0u8; SMALL_AMT];
 fn client_to_server() {
     drop(env_logger::try_init());
 
-    // Create a server listening on a port, then figure out what that port is
-    let mut srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
-    let addr = t!(srv.local_addr());
+    let rt = t!(tokio::runtime::Runtime::new());
+
+    let fut_bind = async move {
+        // Create a server listening on a port, then figure out what that port is
+        let srv = t!(TcpListener::bind("127.0.0.1:0").await);
+        let addr = t!(srv.local_addr());
+
+        (srv, addr)
+    };
+
+    let (srv, addr) = rt.block_on(fut_bind.boxed());
     let (server_cx, client_cx) = contexts();
 
     // Create a future to accept one socket, connect the ssl stream, and then
     // read all the data from it.
     let fut_server = async move {
+        // Create a server listening on a port, then figure out what that port is
         let mut incoming = srv.incoming();
-        let socket = t!(incoming.next().await.unwrap());
+        let socket = Compat::new(t!(incoming.next().await.unwrap()));
         let f = server_cx.accept(socket);
         let mut stream = t!(f.await);
         let mut buf = vec![];
@@ -506,7 +534,7 @@ fn client_to_server() {
     let fut_client = async move {
         // Create a future to connect to our server, connect the ssl stream, and
         // then write a bunch of data to it.
-        let socket = t!(TcpStream::connect(&addr).await);
+        let socket = Compat::new(t!(TcpStream::connect(&addr).await));
         let mut socket = t!(client_cx.connect("localhost", socket).await);
         t!(socket.write_all(&EXPECTED).await);
         t!(socket.flush().await);
@@ -514,9 +542,8 @@ fn client_to_server() {
     };
 
     // Finally, run everything!
-    let mut rt = t!(tokio::runtime::Runtime::new());
-    rt.spawn(fut_client.boxed().unit_error().compat());
-    let data = t!(rt.block_on(fut_server.fuse().boxed().unit_error().compat()));
+    rt.spawn(fut_client.boxed());
+    let data = rt.block_on(fut_server.boxed());
 
     assert!(data == EXPECTED.to_vec());
 }
@@ -525,14 +552,24 @@ fn client_to_server() {
 fn server_to_client() {
     drop(env_logger::try_init());
 
+    let rt = t!(tokio::runtime::Runtime::new());
+
+    let fut_bind = async move {
+        // Create a server listening on a port, then figure out what that port is
+        let srv = t!(TcpListener::bind("127.0.0.1:0").await);
+        let addr = t!(srv.local_addr());
+
+        (srv, addr)
+    };
+
+    let (srv, addr) = rt.block_on(fut_bind.boxed());
+
     // Create a server listening on a port, then figure out what that port is
-    let mut srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
-    let addr = t!(srv.local_addr());
     let (server_cx, client_cx) = contexts();
 
     let fut_server = async move {
         let mut incoming = srv.incoming();
-        let socket = t!(incoming.next().await.unwrap());
+        let socket = Compat::new(t!(incoming.next().await.unwrap()));
         let mut socket = t!(server_cx.accept(socket).await);
         t!(socket.write_all(&EXPECTED).await);
         t!(socket.flush().await);
@@ -540,7 +577,7 @@ fn server_to_client() {
     };
 
     let fut_client = async move {
-        let socket = t!(TcpStream::connect(&addr).await);
+        let socket = Compat::new(t!(TcpStream::connect(&addr).await));
         let mut stream = t!(client_cx.connect("localhost", socket).await);
         let mut buf = vec![];
         t!(stream.read_to_end(&mut buf).await);
@@ -548,9 +585,9 @@ fn server_to_client() {
     };
 
     // Finally, run everything!
-    let mut rt = t!(tokio::runtime::Runtime::new());
-    rt.spawn(fut_server.boxed().unit_error().compat());
-    let data = t!(rt.block_on(fut_client.boxed().unit_error().compat()));
+    let rt = t!(tokio::runtime::Runtime::new());
+    rt.spawn(fut_server.boxed());
+    let data = rt.block_on(fut_client.boxed());
 
     assert!(data == EXPECTED.to_vec());
 }
@@ -559,13 +596,22 @@ fn server_to_client() {
 fn one_byte_at_a_time() {
     drop(env_logger::try_init());
 
-    let mut srv = t!(TcpListener::bind(&t!("127.0.0.1:0".parse())));
-    let addr = t!(srv.local_addr());
+    let rt = t!(tokio::runtime::Runtime::new());
+
+    let fut_bind = async move {
+        // Create a server listening on a port, then figure out what that port is
+        let srv = t!(TcpListener::bind("127.0.0.1:0").await);
+        let addr = t!(srv.local_addr());
+
+        (srv, addr)
+    };
+
+    let (srv, addr) = rt.block_on(fut_bind.boxed());
     let (server_cx, client_cx) = contexts();
 
     let fut_server = async move {
         let mut incoming = srv.incoming();
-        let socket = t!(incoming.next().await.unwrap());
+        let socket = Compat::new(t!(incoming.next().await.unwrap()));
         let mut stream = t!(server_cx.accept(socket).await);
         for byte in SMALL_EXPECTED.iter().cloned() {
             let to_send = [byte];
@@ -576,7 +622,7 @@ fn one_byte_at_a_time() {
     };
 
     let fut_client = async move {
-        let socket = t!(TcpStream::connect(&addr).await);
+        let socket = Compat::new(t!(TcpStream::connect(&addr).await));
         let mut stream = t!(client_cx.connect("localhost", socket).await);
         let mut buf = vec![];
         t!(stream.read_to_end(&mut buf).await);
@@ -584,9 +630,8 @@ fn one_byte_at_a_time() {
     };
 
     // Finally, run everything!
-    let mut rt = t!(tokio::runtime::Runtime::new());
-    rt.spawn(fut_server.boxed().unit_error().compat());
-    let data = t!(rt.block_on(fut_client.boxed().unit_error().compat()));
+    rt.spawn(fut_server.boxed());
+    let data = rt.block_on(fut_client.boxed());
 
     assert!(data == SMALL_EXPECTED.to_vec());
 }
