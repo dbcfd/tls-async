@@ -1,27 +1,28 @@
-#![feature(async_await)]
 use std::net::ToSocketAddrs;
 
 use cfg_if::cfg_if;
-use futures::{FutureExt, TryFutureExt};
 use futures::io::{AsyncReadExt, AsyncWriteExt};
-use romio::TcpStream;
+use futures::FutureExt;
+use futures_tokio_compat::Compat;
 use tls_async::{Error, TlsConnector};
+use tokio::net::TcpStream;
 
 fn check_cause(err: Error, s: &str) {
-    match err {
-        Error::Handshake(e) => {
-            let err = e.to_string();
-            assert!(e.to_string().contains(s), "Error {} did not contain {}", err, s);
-        }
-        _ => panic!("Error {:?} was not a handshake error")
-    }
+    assert!(
+        err.to_string().contains(s),
+        "Error {} did not contain {}",
+        err,
+        s
+    );
 }
 
 macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(e) => e,
+            Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
+        }
+    };
 }
 
 cfg_if! {
@@ -44,7 +45,7 @@ cfg_if! {
         }
     } else {
         fn assert_bad_hostname_error(err: Error) {
-            let err = err.compat().to_string();
+            let err = err.to_string();
             check_cause(err, "CN name");
         }
     }
@@ -58,7 +59,7 @@ fn fetch_google() {
         // First up, resolve google.com
         let addr = t!("google.com:443".to_socket_addrs()).next().unwrap();
 
-        let socket = t!(TcpStream::connect(&addr).await);
+        let socket = Compat::new(t!(TcpStream::connect(&addr).await));
 
         println!("Connected to google");
 
@@ -78,8 +79,8 @@ fn fetch_google() {
         buf
     };
 
-    let mut rt = t!(tokio::runtime::Runtime::new());
-    let data = t!(rt.block_on(fut_result.fuse().boxed().unit_error().compat()));
+    let rt = t!(tokio::runtime::Runtime::new());
+    let data = t!(rt.block_on(fut_result.fuse().boxed().unit_error()));
 
     println!("Data={}", String::from_utf8_lossy(&data));
 
@@ -99,14 +100,14 @@ fn wrong_hostname_error() {
 
     let fut_result = async {
         let addr = t!("google.com:443".to_socket_addrs()).next().unwrap();
-        let socket = t!(TcpStream::connect(&addr).await);
+        let socket = Compat::new(t!(TcpStream::connect(&addr).await));
         let builder = TlsConnector::builder();
         let connector = t!(builder.build());
         connector.connect("rust-lang.org", socket).await
     };
 
-    let mut rt = t!(tokio::runtime::Runtime::new());
-    let res = rt.block_on(fut_result.fuse().boxed().compat());
+    let rt = t!(tokio::runtime::Runtime::new());
+    let res = rt.block_on(fut_result.fuse().boxed());
 
     assert!(res.is_err());
     assert_bad_hostname_error(res.err().unwrap());
